@@ -169,6 +169,80 @@ def _upcast_int_indices(index):
     return index
 
 
+def _analyze_numpy_advanced_indexing(index):
+    """Analyze indexing pattern and return transformation info for NumPy compatibility."""
+    if not isinstance(index, tuple):
+        return index, False
+
+    # Find positions of advanced indices (lists or tensors, but not slices)
+    advanced_positions = []
+    for i, idx in enumerate(index):
+        if isinstance(idx, (list, torch.Tensor)) and not isinstance(idx, slice):
+            advanced_positions.append(i)
+
+    if not advanced_positions:
+        return index, False
+
+    # Convert lists to tensors
+    converted_index = []
+    for idx in index:
+        if isinstance(idx, list):
+            converted_index.append(torch.tensor(idx))
+        else:
+            converted_index.append(idx)
+    converted_index = tuple(converted_index)
+
+    # Check if we need transpose (single advanced index separated by slice)
+    needs_transpose = False
+    if len(advanced_positions) == 1:
+        pos = advanced_positions[0]
+        has_items_before = pos > 0
+        has_slice_after = pos + 1 < len(index) and isinstance(index[pos + 1], slice)
+        has_items_after_slice = pos + 2 < len(index)
+
+        if has_items_before and has_slice_after and has_items_after_slice:
+            needs_transpose = True
+
+    # Handle multiple separated advanced indices (validation only)
+    elif len(advanced_positions) > 1:
+        # Check if advanced indices are adjacent
+        positions_sorted = sorted(advanced_positions)
+        indices_are_separated = False
+        for i in range(len(positions_sorted) - 1):
+            if positions_sorted[i] + 1 != positions_sorted[i + 1]:
+                indices_are_separated = True
+                break
+
+        if indices_are_separated:
+            # Try broadcasting the advanced indices
+            try:
+                advanced_tensors = [converted_index[pos] for pos in advanced_positions]
+                torch.broadcast_tensors(*advanced_tensors)
+            except RuntimeError:
+                pass  # Fall through to normal indexing
+
+    return converted_index, needs_transpose
+
+
+def _numpy_style_advanced_indexing(tensor, index):
+    """Convert NumPy-style advanced indexing to PyTorch-style for compatibility."""
+    converted_index, needs_transpose = _analyze_numpy_advanced_indexing(index)
+    result = tensor[converted_index]
+    return result.transpose(0, 1) if needs_transpose and result.ndim >= 2 else result
+
+
+def _numpy_style_advanced_setitem(tensor, index, value):
+    """Handle NumPy-style advanced indexing for setitem operations."""
+    converted_index, needs_transpose = _analyze_numpy_advanced_indexing(index)
+    if needs_transpose and hasattr(value, "ndim") and value.ndim >= 2:
+        value = (
+            value.transpose(0, 1)
+            if hasattr(value, "transpose")
+            else torch.tensor(value).transpose(0, 1)
+        )
+    return tensor.__setitem__(converted_index, value)
+
+
 # Used to indicate that a parameter is unspecified (as opposed to explicitly
 # `None`)
 class _Unspecified:
@@ -468,7 +542,10 @@ class ndarray:
             index = neg_step(0, index)
         index = _util.ndarrays_to_tensors(index)
         index = _upcast_int_indices(index)
-        return ndarray(tensor.__getitem__(index))
+
+        # Use NumPy-style advanced indexing for compatibility
+        result = _numpy_style_advanced_indexing(tensor, index)
+        return ndarray(result)
 
     def __setitem__(self, index, value):
         index = _util.ndarrays_to_tensors(index)
@@ -478,7 +555,8 @@ class ndarray:
             value = normalize_array_like(value)
             value = _util.cast_if_needed(value, self.tensor.dtype)
 
-        return self.tensor.__setitem__(index, value)
+        # Use NumPy-style advanced indexing for setitem compatibility
+        return _numpy_style_advanced_setitem(self.tensor, index, value)
 
     take = _funcs.take
     put = _funcs.put
