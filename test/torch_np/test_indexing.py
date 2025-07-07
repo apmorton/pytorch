@@ -150,7 +150,11 @@ class TestAdvancedIndexing(TestCase):
     def test_special_cases(self):
         """Test edge cases and array setitem."""
         # Edge cases
-        edge_cases = [([0, 0, 1, 1], slice(None)), (slice(None), [0, 2, 0, 2])]
+        edge_cases = [
+            ([0, 0, 1, 1], slice(None)), 
+            (slice(None), [0, 2, 0, 2]),
+            (slice(None), [])  # Empty list indexing
+        ]
         self._test_pattern((4, 6), edge_cases, "Edge")
 
         # Boolean indexing

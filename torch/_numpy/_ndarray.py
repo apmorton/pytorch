@@ -187,7 +187,7 @@ def _analyze_numpy_advanced_indexing(index):
     converted_index = []
     for idx in index:
         if isinstance(idx, list):
-            converted_index.append(torch.tensor(idx))
+            converted_index.append(torch.tensor(idx, dtype=torch.long))
         else:
             converted_index.append(idx)
     converted_index = tuple(converted_index)
