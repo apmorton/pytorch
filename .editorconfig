@@ -19,3 +19,8 @@ indent_style = tab
 indent_style = space
 indent_size = 2
 end_of_line = crlf
+
+# Shell Script
+[*.{sh,bash}]
+indent_style = space
+indent_size = 2
